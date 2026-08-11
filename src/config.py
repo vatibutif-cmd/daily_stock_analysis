@@ -891,6 +891,9 @@ class Config:
     longbridge_access_token: Optional[str] = None
     longbridge_oauth_client_id: Optional[str] = None
     stock_index_remote_update_enabled: bool = True
+    # === 同花顺金融数据 API (fuyao.aicubes.cn) ===
+    ths_api_key: Optional[str] = None
+    ths_priority: int = 0
 
     # === Built-in stock screening ===
     screening_enabled: bool = False
@@ -1787,6 +1790,8 @@ class Config:
             tickflow_priority=parse_env_int(os.getenv('TICKFLOW_PRIORITY'), 2, field_name='TICKFLOW_PRIORITY', minimum=0),
             tickflow_batch_daily_enabled=parse_env_bool(os.getenv('TICKFLOW_BATCH_DAILY_ENABLED'), default=True),
             tickflow_batch_size=parse_env_int(os.getenv('TICKFLOW_BATCH_SIZE'), 100, field_name='TICKFLOW_BATCH_SIZE', minimum=1),
+            ths_api_key=os.getenv('THS_API_KEY') or None,
+            ths_priority=parse_env_int(os.getenv('THS_PRIORITY'), 0, field_name='THS_PRIORITY', minimum=0),
             finnhub_api_key=os.getenv('FINNHUB_API_KEY') or None,
             alphavantage_api_key=os.getenv('ALPHAVANTAGE_API_KEY') or None,
             longbridge_app_key=os.getenv('LONGBRIDGE_APP_KEY') or None,

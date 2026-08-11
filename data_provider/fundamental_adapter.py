@@ -303,6 +303,9 @@ class AkshareFundamentalAdapter:
         }
 
         # Financial indicators
+        # NOTE: ak.stock_financial_abstract returns a TRANSPOSED layout — metrics as
+        # ROWS, report periods as COLUMNS (['选项','指标','20260331','20251231',...]).
+        # _pick_by_keywords scans COLUMN NAMES, so we transpose metrics->columns first.
         fin_df, fin_source, fin_errors = self._call_df_candidates([
             ("stock_financial_abstract", {"symbol": stock_code}),
             ("stock_financial_analysis_indicator", {"symbol": stock_code}),
@@ -310,6 +313,35 @@ class AkshareFundamentalAdapter:
         ])
         result["errors"].extend(fin_errors)
         if fin_df is not None:
+            if fin_source == "stock_financial_abstract":
+                try:
+                    # Transpose: columns become metric names, latest period becomes the row.
+                    # Keep the first two label columns out; pick the latest report-period column.
+                    label_cols = [c for c in fin_df.columns if str(c) in ("选项", "指标")]
+                    if len(fin_df.columns) > 2:
+                        # choose the most recent report period column (max numeric date)
+                        period_cols = [c for c in fin_df.columns if str(c) not in ("选项", "指标")]
+                        if period_cols:
+                            def _period_key(c):
+                                s = str(c)
+                                try:
+                                    return int(s)
+                                except ValueError:
+                                    return 0
+                            latest = max(period_cols, key=_period_key)
+                            transposed = fin_df[["指标", latest]].dropna(subset=["指标"])
+                            transposed = transposed.rename(columns={"指标": "指标", latest: "值"})
+                            # Build a single-row frame: metric name -> value
+                            single = {}
+                            for _, r in transposed.iterrows():
+                                metric = str(r.get("指标", "")).strip()
+                                val = r.get("值")
+                                if metric and metric not in single:
+                                    single[metric] = val
+                            if single:
+                                fin_df = pd.DataFrame([single])
+                except Exception as exc:
+                    result["errors"].append(f"financial_abstract_transpose:{type(exc).__name__}")
             row = _extract_latest_row(fin_df, stock_code)
             if row is not None:
                 revenue_yoy = _safe_float(_pick_by_keywords(row, ["营业收入同比", "营收同比", "收入同比", "同比增长"]))

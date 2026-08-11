@@ -1175,6 +1175,14 @@ class DataFetcherManager:
         yfinance = YfinanceFetcher()
         optional_fetchers: List[BaseFetcher] = []
 
+        ths_api_key = (getattr(config, "ths_api_key", None) or "").strip()
+        if ths_api_key:
+            from .fuyao_fetcher import FuyaoFetcher
+            optional_fetchers.append(FuyaoFetcher(api_key=ths_api_key))
+            logger.info("[数据源初始化] 启用 FuyaoFetcher（同花顺金融数据 API, priority=%s）", getattr(config, "ths_priority", 0))
+        else:
+            logger.debug("[数据源初始化] 跳过未配置的 FuyaoFetcher（THS_API_KEY 未设置）")
+
         tushare_token = (getattr(config, "tushare_token", None) or "").strip()
         if tushare_token:
             optional_fetchers.append(TushareFetcher())  # 会根据 Token 配置自动调整优先级
@@ -1217,14 +1225,20 @@ class DataFetcherManager:
         # 初始化数据源列表
         self._ensure_concurrency_guards()
         with self._fetchers_lock:
+            # FuyaoFetcher (同花顺) with priority 0 should trail only when its
+            # priority is strictly higher; at equal priority it must come first
+            # so the structured THS API wins over Efinance for A-share daily K.
+            fuyao_fetchers = [f for f in optional_fetchers if f.name == "FuyaoFetcher"]
+            other_optional = [f for f in optional_fetchers if f.name != "FuyaoFetcher"]
             self._fetchers = [
+                *fuyao_fetchers,
                 efinance,
                 akshare,
                 pytdx,
                 baostock,
                 yfinance,
                 tencent,
-                *optional_fetchers,
+                *other_optional,
             ]
 
             # 按优先级排序（Tushare 如果配置了 Token 且初始化成功，优先级为 0）
