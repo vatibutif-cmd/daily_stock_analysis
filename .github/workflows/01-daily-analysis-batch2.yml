@@ -271,6 +271,8 @@ jobs:
           # ==========================================
           # 数据源
           # ==========================================
+          THS_API_KEY: ${{ secrets.THS_API_KEY }}
+          THS_PRIORITY: ${{ vars.THS_PRIORITY || secrets.THS_PRIORITY || '0' }}
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           # Tushare Pro 自定义接入地址（可选；指向自建网关或第三方兼容镜像时设置）
           TUSHARE_HTTP_URL: ${{ vars.TUSHARE_HTTP_URL || secrets.TUSHARE_HTTP_URL }}
