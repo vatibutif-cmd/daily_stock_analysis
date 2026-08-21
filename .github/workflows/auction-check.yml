@@ -1,0 +1,43 @@
+name: 开开竞价强弱核对
+
+# 纯云端(GitHub Actions)执行, 关机也能收到盘前竞价判断。
+# 9:25 集合竞价结束后推送开开实业 600272 的竞价强弱快照(今开/昨收/量比/强弱/关键位状态)。
+# 窗口守卫 9:25-9:32 保证只在竞价结果新鲜时推送, 否则静默。
+
+on:
+  schedule:
+    # UTC = 北京时间 - 8 ; 9:24 / 9:25 北京时触发(留足漂移余量)
+    - cron: '24 1 * * 1-5'     # 09:24
+    - cron: '25 1 * * 1-5'     # 09:25
+    - cron: '26 1 * * 1-5'     # 09:26
+  workflow_dispatch:
+    inputs:
+      test:
+        description: '测试模式: 无论窗口/开盘与否都发一条竞价快照'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kaihai-auction
+  cancel-in-progress: false
+
+jobs:
+  auction:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TZ: Asia/Shanghai
+      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+      FORCE_SEND: ${{ github.event.inputs.test }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 运行竞价强弱核对
+        run: python scripts/auction_check_cloud.py
