@@ -83,9 +83,10 @@ def main():
 
     # ---------- 北京时间窗口守卫 (9:00-10:10) ----------
     # runner 需设 TZ=Asia/Shanghai; 守卫防 schedule 秒级漂移导致窗口外误发。
+    force_send = os.environ.get("FORCE_SEND", "").strip().lower() in ("1", "true", "yes")
     now_t = time.localtime()
     hhmm = now_t.tm_hour * 100 + now_t.tm_min
-    if not (900 <= hhmm <= 1010):
+    if not force_send and not (900 <= hhmm <= 1010):
         print(f"[guard] 当前北京时间 {now_t.tm_hour:02d}:{now_t.tm_min:02d} 不在 9:00-10:10 窗口, 静默退出", flush=True)
         return 0
 
@@ -115,9 +116,12 @@ def main():
     if abs(pct) >= 7:
         triggers.append(f"🔥 大幅异动 {pct}% (现价 {price})")
 
-    if not triggers:
+    if not triggers and not force_send:
         print("[no-trigger] 未触及关键位, 静默退出", flush=True)
         return 0
+
+    if force_send and not triggers:
+        triggers = ["🧪 测试消息: 云端盘中提醒链路已打通。后续 9:00-10:00 触关键位才会推, 平时静默。"]
 
     content = (
         f"<b>{STOCK_NAME} ({THSCODE}) 关键位提醒</b><br>"
