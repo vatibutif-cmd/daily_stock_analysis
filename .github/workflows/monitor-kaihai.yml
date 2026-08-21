@@ -14,6 +14,15 @@ on:
     - cron: '45 1 * * 1-5'     # 09:45
     - cron: '0 2 * * 1-5'      # 10:00
   workflow_dispatch:           # 手动触发(测试/补发)
+    inputs:
+      test:
+        description: '测试模式: 无论窗口/触发与否都发一条快照到微信'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 permissions:
   contents: read
@@ -29,6 +38,7 @@ jobs:
     env:
       TZ: Asia/Shanghai
       PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+      FORCE_SEND: ${{ github.event.inputs.test }}
     steps:
       - uses: actions/checkout@v5
 
