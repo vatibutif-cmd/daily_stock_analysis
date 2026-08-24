@@ -1,0 +1,45 @@
+name: 监控池盘中关键位提醒
+
+# 纯云端(GitHub Actions)执行, 电脑关机也能收提醒。
+# 动态读取 scripts/levels.py 全部持仓+自选(回避票自动跳过),
+# 交易时段(9:00-15:00)定时拉实时价, 触及关键位(止损/减仓/清仓/高抛/买点/低吸/浮亏10%/异动≥7%)时 PushPlus 推微信, 其余静默。
+# 改池子/价位 → 只需同步 scripts/levels.py, 本脚本自动跟随。
+
+on:
+  schedule:
+    # UTC = 北京时间 - 8 ; 9:00-11:30 每15分 + 13:00-15:00 每15分
+    - cron: '0,15,30,45 1-2 * * 1-5'   # 09:00-10:45
+    - cron: '0,15,30 3 * * 1-5'        # 11:00-11:30
+    - cron: '0,15,30,45 5-6 * * 1-5'   # 13:00-14:45
+    - cron: '0 7 * * 1-5'              # 15:00
+  workflow_dispatch:           # 手动触发(测试/补发)
+    inputs:
+      test:
+        description: '测试模式: 无论窗口/触发与否都发一条快照到微信'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pool-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TZ: Asia/Shanghai
+      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+      FORCE_SEND: ${{ github.event.inputs.test }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 运行监控池关键位监控
+        run: python scripts/monitor_pool.py
