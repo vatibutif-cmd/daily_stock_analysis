@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-竞价强弱核对(云端版) —— 关机也能收到盘前竞价判断。
-9:25 集合竞价结束后运行。拉取监控标的今开/昨收/量比/换手, 计算竞价强弱标签,
-每天推一条快照到 PushPlus(微信)。零重依赖, 仅腾讯行情 API。
-
-与本地 auction_check.py 的区别: 不依赖 levels.py, 内置标的; 输出走 PushPlus 而非 console。
+竞价强弱核对(云端通用版) —— 关机也能收到盘前竞价判断。
+9:25 集合竞价结束后运行。动态读取同目录 levels.py(单一数据源)的持仓+自选,
+拉取今开/昨收/量比/换手, 计算竞价强弱标签, 每天推一条快照到 PushPlus(微信)。
+零重依赖, 仅腾讯行情 API。回避票(价位≥90)自动跳过。
 """
 import os
 import sys
@@ -13,11 +12,10 @@ import time
 import urllib.request
 import urllib.parse
 
-# ---------- 配置 ----------
-# 监控标的: 代码 -> (名称, 关键位[选填: 止损/买点/目标])
-WATCH = {
-    "600272": {"name": "开开实业", "stop": 17.45, "buy": 18.30, "target": 19.60},
-}
+# 动态读取同目录 levels.py
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from levels import HOLDINGS, WATCH, COST  # noqa: E402
+
 TRIGGER_TOL = 0.25
 
 # 腾讯行情字段: 3=现价 4=昨收 5=开盘 32=涨跌幅% 38=换手% 49=量比
@@ -105,44 +103,65 @@ def pushplus_send(title, content):
         return False
 
 
+def skip_stock(levels):
+    """回避票(价位≥90 如 99.99 标记)跳过。"""
+    return any(v >= 90 for v in levels.values() if isinstance(v, (int, float)))
+
+
 def main():
     if sys.stdout.encoding and sys.stdout.encoding.lower().startswith("ascii"):
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-    # 北京时间窗口守卫: 9:25-9:32 (9:30后按连续竞价价算, 不再准)
+    # 北京时间窗口守卫: 9:25-9:35 (9:30后按连续竞价价算, 不再准; 留调度漂移余量)
     force_send = os.environ.get("FORCE_SEND", "").strip().lower() in ("1", "true", "yes")
     now_t = time.localtime()
     hhmm = now_t.tm_hour * 100 + now_t.tm_min
-    if not force_send and not (925 <= hhmm <= 932):
-        print(f"[guard] 北京时间 {now_t.tm_hour:02d}:{now_t.tm_min:02d} 不在 9:25-9:32 窗口, 静默退出", flush=True)
+    if not force_send and not (925 <= hhmm <= 935):
+        print(f"[guard] 北京时间 {now_t.tm_hour:02d}:{now_t.tm_min:02d} 不在 9:25-9:35 窗口, 静默退出", flush=True)
         return 0
 
-    quotes = fetch_quotes(list(WATCH.keys()))
+    # 动态组装监控池: 持仓 + 自选(跳过回避票)
+    W = {}
+    for code, (name, tag, levels) in HOLDINGS.items():
+        W[code] = {"name": name, "tag": tag, "levels": levels, "cost": COST.get(code), "kind": "hold"}
+    for code, (name, tag, levels) in WATCH.items():
+        if skip_stock(levels):
+            continue
+        W[code] = {"name": name, "tag": tag, "levels": levels, "cost": None, "kind": "watch"}
+
+    quotes = fetch_quotes(list(W.keys()))
     if not quotes:
         print("[warn] 行情拉取失败, 静默退出", flush=True)
         return 0
 
     lines = []
-    for code, cfg in WATCH.items():
+    for code, cfg in W.items():
         if code not in quotes:
-            lines.append(f"{cfg['name']}: 无有效行情")
+            lines.append(f"{cfg['tag']}{cfg['name']}: 无有效行情")
             continue
         q = quotes[code]
         pre = q["pre_close"]
         gap = (q["open"] / pre - 1) * 100 if pre else 0.0
         label = auction_label(gap, q["vol_ratio"])
-        lines.append(f"<b>{cfg['name']} ({code})</b><br>"
+        cost_pnl = ""
+        if cfg["cost"] and q["price"] > 0:
+            cost_pnl = f" | 浮盈亏 {(q['price'] / cfg['cost'] - 1) * 100:+.1f}%"
+        lines.append(f"<b>{cfg['tag']}{cfg['name']} ({code})</b><br>"
                      f"今开 <b>{q['open']:.2f}</b> ({gap:+.1f}%) | 昨收 {pre:.2f}<br>"
-                     f"量比 {q['vol_ratio']:.1f} · 换手 {q['turnover']:.1f}% · 现价 {q['price']:.2f} ({q['pct']:+.1f}%)<br>"
+                     f"量比 {q['vol_ratio']:.1f} · 换手 {q['turnover']:.1f}% · 现价 {q['price']:.2f} ({q['pct']:+.1f}%){cost_pnl}<br>"
                      f"竞价强弱: <b>{label}</b>")
 
-        # 关键位状态(竞价就能看的)
-        kp = [f"止损{cfg['stop']}" if q["price"] <= cfg["stop"] + TRIGGER_TOL else None,
-              f"买点区{cfg['buy']}" if abs(q["price"] - cfg["buy"]) <= TRIGGER_TOL else None,
-              f"目标{cfg['target']}" if q["price"] >= cfg["target"] - TRIGGER_TOL else None]
-        kp = [x for x in kp if x]
+        # 关键位状态(竞价就能看的, 只用持仓的卖出/成本区 + 自选买点)
+        kp = []
+        for lname, lv in cfg["levels"].items():
+            if not isinstance(lv, (int, float)) or lv <= 0 or lv >= 90:
+                continue
+            if abs(q["price"] - lv) <= TRIGGER_TOL:
+                kp.append(f"{lname} {lv:.2f}")
         if kp:
             lines[-1] += f"<br>🔑 竞价已触: {', '.join(kp)}"
+        if cfg["cost"] and q["price"] <= cfg["cost"] * 0.90:
+            lines[-1] += "<br>🔻 较成本浮亏超10%"
 
     now = time.strftime("%m-%d %H:%M")
     title = f"🌅 竞价强弱 {now}"
